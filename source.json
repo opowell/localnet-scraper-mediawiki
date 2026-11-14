@@ -1,0 +1,19 @@
+{
+  "scrapers": [
+    {
+      "name": "Wikipedia",
+      "urlPattern": "wikipedia.org",
+      "searchUrl": "https://en.wikipedia.org/w/index.php?search={term}&fulltext=1"
+    },
+    {
+      "name": "Wiktionary",
+      "urlPattern": "wiktionary.org",
+      "searchUrl": "https://en.wiktionary.org/w/index.php?search={term}&fulltext=1"
+    },
+    {
+      "name": "Fandom",
+      "urlPattern": "fandom.com/wiki/"
+    }
+  ],
+  "file": "mediawiki.js"
+}
