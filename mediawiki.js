@@ -1,14 +1,17 @@
 // What a wiki's page shows that is not its text: the infobox and other boxes beside it (Fandom's is an <aside>), the
 // navigation boxes at its foot, the notices and hatnotes heading it, the boxes pointing to its sister wikis, its table
-// of contents, its footnote markers ([1]) and edit links (which parseMediaWiki takes out of the text they stand in),
-// its references, and what is hidden or not meant to be printed.
+// of contents, its edit links (which parseMediaWiki takes out of the text they stand in), and what is hidden or not
+// meant to be printed.
 const MEDIAWIKI_SKIP = [
   '.infobox, .portable-infobox, aside, .sidebar, .navbox, .vertical-navbox, .navigation-not-searchable, .toc, #toc',
   '.side-box, .sistersitebox, .schwesterbox, .mw-authority-control, #coordinates',
   '.hatnote, .dablink, .ambox, .msgbox, .mbox-small, .metadata, .noprint, .shortdescription, .mw-editsection',
-  '.reference, .reflist, .refbegin, .mw-references-wrap, .references, .mw-cite-backlink',
   '.mw-empty-elt, .mw-collapsed, [style*="display:none"], style, link, script',
 ].join(', ')
+
+// A page's references: the marks of its footnotes ([1]), its notes and references, and the works it cites. Read as
+// footnotes (see writeFootnotes) by a Localnet that sets them; their links are not the page's.
+const MEDIAWIKI_REFERENCES = '.reference, .reflist, .refbegin, .mw-references-wrap, .references, .mw-cite-backlink'
 
 // A wiki page's facts, as its infobox gives them, as one table: a row with a label and a value is a row of it, "Born |
 // Parish Lesane Crooks<br>June 16, 1971", its value's lines kept apart; a row with only a heading or a picture is left
@@ -130,12 +133,43 @@ function galleryFigures(body) {
 }
 
 // A list the stylesheet sets out on one line, its items set apart by the separators it adds (Wikipedia's .hlist),
-// written as one line, its items apart by commas, as the browser's text of it runs them together.
+// made one line, its items apart by commas, as the browser's text of it runs them together; its links are kept.
 function joinHorizontalLists(element) {
   for (const list of element.querySelectorAll('.hlist ul, .hlist ol')) {
     if (!list.parentElement.closest('.hlist li')) {
-      list.replaceWith(document.createTextNode(Array.from(list.children, li => li.innerText.trim()).filter(Boolean).join(', ')))
+      const line = document.createElement('span')
+      Array.from(list.children).filter(li => li.textContent.trim()).forEach((li, i) => {
+        line.append(...(i ? [', '] : []), ...li.childNodes)
+      })
+      list.replaceWith(line)
     }
+  }
+}
+
+// Writes the article's footnotes as Markdown writes them: each mark in the text ([1], [a], [note 1]) as "[^1]", and
+// each note or reference of its lists (ol.references) as a paragraph of its own, "[^1]: Hodges 1983, p. 42.", its
+// label that of the marks pointing to it (a group's own, "a" or "note 1"), else its number, without the links back
+// to its marks.
+function writeFootnotes(body) {
+  const labels = new Map()
+  for (const mark of body.querySelectorAll('sup.reference, sup.mw-ref')) {
+    const label = mark.textContent.replace(/[[\]]/g, '').trim()
+    const href = mark.querySelector('a[href]')?.getAttribute('href') ?? ''
+    const id = href.includes('#') ? decodeURIComponent(href.slice(href.indexOf('#') + 1)) : ''
+    if (label && id && !labels.has(id)) {
+      labels.set(id, label)
+    }
+    mark.replaceWith(label ? `[^${label}]` : '')
+  }
+  for (const list of body.querySelectorAll('ol.references')) {
+    const notes = document.createElement('div')
+    Array.from(list.children).forEach((li, i) => {
+      li.querySelectorAll('.mw-cite-backlink').forEach(backlink => backlink.remove())
+      const note = document.createElement('p')
+      note.append(`[^${labels.get(li.id) ?? i + 1}]: `, ...(li.querySelector('.mw-reference-text, .reference-text') ?? li).childNodes)
+      notes.append(note)
+    })
+    list.replaceWith(notes)
   }
 }
 
@@ -164,9 +198,10 @@ function mediaWikiArticle(url) {
 // A page of a MediaWiki wiki (Wikipedia, Wiktionary, a Fandom wiki) reads as its article: its title the page's
 // heading, its content its lead picture (the infobox's first, else none, with its caption) and the facts its infobox
 // gives, as a table (see mediaWikiFacts), then its text, as textBlocks reads it with structure: each paragraph,
-// heading, list item (marked, nested), quotation, code block, picture and table, leaving out the boxes, notes and
-// references around it (MEDIAWIKI_SKIP) and the headings of sections left empty. Its formulas are written as text (see
-// mathText), its galleries as pictures with their captions, and the button playing a word's pronunciation is left out.
+// heading, list item (marked, nested), quotation, code block, picture and table, leaving out the boxes around it
+// (MEDIAWIKI_SKIP) and the headings of sections left empty, its links written into it (see withLinksWritten), its footnotes' marks and its
+// notes and references as footnotes (see writeFootnotes). Its formulas are written as text (see mathText), its
+// galleries as pictures with their captions, and the button playing a word's pronunciation is left out.
 // It links, with weight 0.1, as an article's links are, to each article its text links to, once, then to each site
 // its text links to, then to its categories. A category's page (Category:…) links to each of its subcategories and
 // articles, and a search (Special:Search, or /w/index.php?search=…) to each article it finds: both are listings, their
@@ -183,14 +218,18 @@ function parseMediaWiki(_profileId) {
     return listingOf(linkUrls('#mw-subcategories li a[href], #mw-pages li a[href], a.category-page__member-link[href]')) ?? { listing: true }
   }
   const body = content.querySelector('.mw-parser-output') || content
-  // Footnote markers ([6], [note 1]) and edit links stand within the text, so are taken out of it. The scrape's tab is
-  // its own, so the page itself is changed.
-  body.querySelectorAll('sup.reference, .mw-ref, .mw-editsection, sup.noprint').forEach(marker => marker.remove())
+  // A Localnet whose helpers predate markdownTable reads neither tables nor marks, so is given rows and plain items;
+  // one whose helpers predate withLinksWritten sets neither links nor footnotes, so is given neither.
+  const structured = typeof markdownTable === 'function'
+  const linked = structured && typeof withLinksWritten === 'function'
+  // Edit links ([edit]) and notes such as [citation needed] stand within the text, so are taken out of it, as are the
+  // marks of footnotes where they are not read. The scrape's tab is its own, so the page itself is changed.
+  body.querySelectorAll(`.mw-editsection, sup.noprint${linked ? '' : ', sup.reference, .mw-ref'}`).forEach(marker => marker.remove())
   const title = document.querySelector('#firstHeading').innerText.trim()
   const articles = new Map()
   const sites = new Map()
   for (const a of body.querySelectorAll('a[href]')) {
-    if (a.closest(MEDIAWIKI_SKIP) || a.classList.contains('new')) {
+    if (a.closest(`${MEDIAWIKI_SKIP}, ${MEDIAWIKI_REFERENCES}`) || a.classList.contains('new')) {
       continue
     }
     const url = new URL(a.href)
@@ -216,13 +255,17 @@ function parseMediaWiki(_profileId) {
     }
   }
   joinHorizontalLists(content)
+  if (linked) {
+    writeFootnotes(body)
+    // A link to a page not written yet (a red link) leads nowhere worth following, so is left as its text.
+    body.querySelectorAll('a.new').forEach(a => a.replaceWith(...a.childNodes))
+  }
   const leadImage = body.querySelector('.infobox img, .portable-infobox img')
   const leadCaption = leadImage?.closest('td, figure')?.querySelector('.infobox-caption, .pi-caption, figcaption')
   const lead = leadImage && imageBlock(leadImage, leadCaption?.innerText.trim() ?? '')
-  // A Localnet whose helpers predate markdownTable reads neither tables nor marks, so is given rows and plain items.
-  const structured = typeof markdownTable === 'function'
-  const facts = structured ? mediaWikiFacts() : null
-  const blocks = withoutEmptySections(textBlocks(body, structured ? { structure: true, skip: MEDIAWIKI_SKIP } : { lists: true, tables: true, skip: MEDIAWIKI_SKIP }))
+  const skip = linked ? MEDIAWIKI_SKIP : `${MEDIAWIKI_SKIP}, ${MEDIAWIKI_REFERENCES}`
+  const facts = linked ? withLinksWritten(content, mediaWikiFacts) : structured ? mediaWikiFacts() : null
+  const blocks = withoutEmptySections(textBlocks(body, structured ? { structure: true, links: linked, skip } : { lists: true, tables: true, skip }))
     .map(block => block.replace(/[\u200B\u00AD]/g, ''))
   const categories = Array.from(document.querySelectorAll('#catlinks .mw-normal-catlinks li a[href], .page-header__categories a[href*="/wiki/"]'), a => ({
     url: a.href,

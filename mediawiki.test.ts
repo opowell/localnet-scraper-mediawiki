@@ -9,7 +9,7 @@ afterEach(resetPage)
 describe('mediaWiki', () => {
   const { parseMediaWiki } = load('mediawiki.js', ['parseMediaWiki'])
 
-  it('reads an article as its lead picture, its infobox\'s facts as a table and its text, without footnotes, boxes or edit links', () => {
+  it('reads an article as its lead picture, its infobox\'s facts as a table and its text, its links and footnotes, without boxes or edit links', () => {
     visit('https://en.wikipedia.org/wiki/Alan_Turing', `
       <h1 id="firstHeading">Alan Turing</h1>
       <div id="mw-content-text"><div class="mw-parser-output">
@@ -35,9 +35,11 @@ describe('mediaWiki', () => {
       content: [
         '![Turing in 1928](https://upload.wikimedia.org/turing.jpg)',
         '|  |  |\n| --- | --- |\n| Born | 23 June 1912<br>Maida Vale |\n| Known for | Enigma, Turing test |',
-        expect.stringMatching(/^Alan Turing was a logician who worked on\s+a film, IPA, nothing\s+and his site\.$/),
+        expect.stringMatching(/^Alan Turing was a \[logician\]\(https:\/\/en\.wikipedia\.org\/wiki\/Logic\)\[\^1\] who worked on\s+\[a film\]\(https:\/\/en\.wikipedia\.org\/wiki\/Star_Wars:_Episode_IV\), \[IPA\]\(https:\/\/en\.wikipedia\.org\/wiki\/Help:IPA\), nothing\s+and \[his site\]\(https:\/\/www\.turing\.org\.uk\/\)\.$/),
         '## Life',
         '| Year | Event |\n| --- | --- |\n| 1936 | Paper |',
+        '## References',
+        '[^1]: A book.',
       ],
       links: [
         { url: 'https://en.wikipedia.org/wiki/Logic', title: 'logician', score: 0.1 },
@@ -46,6 +48,26 @@ describe('mediaWiki', () => {
         { url: 'https://en.wikipedia.org/wiki/Category:Logicians', title: 'Logicians', score: 0.1 },
       ],
     })
+  })
+
+  it('labels footnotes as their marks do, a group\'s by its own letters, without the links back to the marks', () => {
+    visit('https://en.wikipedia.org/wiki/Tupac_Shakur', `
+      <h1 id="firstHeading">Tupac Shakur</h1>
+      <div id="mw-content-text"><div class="mw-parser-output">
+        <p>Born Parish Crooks<sup class="reference"><a href="./Tupac_Shakur#cite_note-a">[a]</a></sup> in 1971.<sup class="mw-ref reference"><a href="./Tupac_Shakur#cite_note-7">[1]</a></sup></p>
+        <h2>Footnotes</h2>
+        <div class="reflist"><ol class="references"><li id="cite_note-a"><span class="mw-cite-backlink"><a href="#cite_ref-a">^</a></span> <span class="mw-reference-text">His <a href="https://a.example/bio">biography</a> says so.</span></li></ol></div>
+        <h2>References</h2>
+        <div class="reflist"><ol class="references"><li id="cite_note-7"><span class="mw-cite-backlink">↑</span><span class="reference-text">Robinson 2024.</span></li><li id="cite_note-8">Unmarked.</li></ol></div>
+      </div></div>`)
+    expect(parseMediaWiki().content).toEqual([
+      'Born Parish Crooks[^a] in 1971.[^1]',
+      '## Footnotes',
+      '[^a]: His [biography](https://a.example/bio) says so.',
+      '## References',
+      '[^1]: Robinson 2024.',
+      '[^2]: Unmarked.',
+    ])
   })
 
   it('marks lists and quotations, writes formulas as text, and gives a gallery\'s pictures their captions', () => {
